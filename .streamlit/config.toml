@@ -1,0 +1,14 @@
+# Listen on all network interfaces so others on your LAN can open the dashboard.
+# Share: http://YOUR_PC_IP:8501
+[server]
+address = "0.0.0.0"
+port = 8501
+enableCORS = true
+enableXsrfProtection = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+# Use localhost in the browser — 0.0.0.0 is listen-only, not a valid URL to open
+serverAddress = "localhost"
+serverPort = 8501

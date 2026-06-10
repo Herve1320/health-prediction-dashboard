@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+
+# Secrets
+tunnel_secrets.bat
+.env
+.streamlit/secrets.toml
+
+# Local-only files
+public_url.txt
+*.log
+
+# Optional local database/tunnel scripts
+run_public.bat
+run_dashboard.bat
+free_port_8501.bat
+setup_env.bat
+share_public_ngrok.py

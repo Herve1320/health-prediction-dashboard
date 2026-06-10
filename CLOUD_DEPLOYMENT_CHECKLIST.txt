@@ -1,0 +1,42 @@
+CLOUD DEPLOYMENT CHECKLIST
+
+Goal:
+Deploy the Health Prediction Streamlit dashboard so it works even when the local computer is off.
+
+Recommended platform:
+Streamlit Community Cloud.
+
+Required files in GitHub:
+- app.py
+- clinical_pipeline.py
+- db_config.py
+- db_service.py
+- requirements.txt
+- generated_data/ml_dataset.csv
+- full_patient_predictions.csv
+- models/ folder with .pkl files
+
+Use these cloud-ready replacements:
+- Rename db_config_cloud_ready.py to db_config.py
+- Rename db_service_cloud_ready.py to db_service.py
+- Rename requirements_cloud.txt to requirements.txt
+
+Before uploading:
+1. Run locally:
+   python data_generator.py
+   python main_engine.py
+2. Confirm these exist:
+   generated_data/ml_dataset.csv
+   full_patient_predictions.csv
+   models/pipeline_config.pkl
+
+Streamlit Cloud settings:
+Main file path:
+app.py
+
+Secrets:
+APP_MODE = "cloud"
+DASHBOARD_PASSWORD = "choose-a-password"
+
+Important:
+Do not upload tunnel_secrets.bat or ngrok token to GitHub.
