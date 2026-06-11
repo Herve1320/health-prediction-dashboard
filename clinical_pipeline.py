@@ -326,6 +326,41 @@ def apply_clinical_consistency_guardrails(predictions, patient_row):
     return predictions
 
 
+def synchronize_steps_with_guardrails(steps, guarded_predictions):
+    """
+    Update the displayed step values so the dashboard does not show old
+    pre-guardrail predictions after the clinical guardrail corrected them.
+    """
+    if not steps:
+        return steps
+
+    updated_steps = []
+    for step in steps:
+        step = dict(step)
+        stage = step.get("stage")
+
+        if stage in guarded_predictions:
+            step["value"] = guarded_predictions[stage]
+
+            # If a severe binary risk signal was suppressed, lower confidence display safely.
+            if guarded_predictions[stage] == 0 and stage in [
+                "Hypertensive_Event",
+                "Hypertensive_Crisis_Risk",
+                "BP_Medication_Recommendation",
+                "Cardiovascular_Event_Risk",
+                "Stroke_Risk",
+                "Heart_Attack_Risk",
+                "Emergency_Visit_Risk",
+            ]:
+                step["confidence"] = None
+                step["calibrated"] = False
+                step["guardrail_adjusted"] = True
+
+        updated_steps.append(step)
+
+    return updated_steps
+
+
 def compute_overall_risk(predictions, patient_row=None):
     """
     Compute a clinically consistent Composite Pipeline Risk Score.
@@ -697,6 +732,7 @@ def assess_patient(patient_row, models_registry):
         })
 
     upstream = apply_clinical_consistency_guardrails(upstream, patient_row)
+    steps = synchronize_steps_with_guardrails(steps, upstream)
     overall = compute_overall_risk(upstream, patient_row)
     upstream.update(overall)
     return {"steps": steps, "predictions": upstream, "overall": overall}
@@ -761,3 +797,38 @@ def load_pipeline_models():
             }
 
     return config, models, metadata
+
+
+def self_test_normal_profile():
+    """
+    Quick internal sanity test for normal BP profile.
+    Expected: Low risk, score <= 1.9, acute risk signals suppressed.
+    """
+    patient_row = pd.Series({
+        "Age": 20,
+        "Gender": 0,
+        "RegionID": 1,
+        "Avg_Systolic": 115,
+        "Avg_Diastolic": 75,
+        "BP_Volatility": 5,
+        "Pulse_Pressure": 40,
+        "Reading_Count": 30,
+    })
+
+    noisy_predictions = {
+        "BP_Stage": 3,
+        "Health_Risk_Tier": 2,
+        "Hypertensive_Event": 1,
+        "Hypertensive_Crisis_Risk": 1,
+        "BP_Medication_Recommendation": 1,
+        "Cardiovascular_Event_Risk": 1,
+        "Stroke_Risk": 1,
+        "Heart_Attack_Risk": 1,
+        "Emergency_Visit_Risk": 1,
+    }
+
+    guarded = apply_clinical_consistency_guardrails(noisy_predictions, patient_row)
+    overall = compute_overall_risk(guarded, patient_row)
+    return guarded, overall
+
+
