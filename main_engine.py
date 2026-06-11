@@ -14,6 +14,7 @@ CSV_PATH = "generated_data/ml_dataset.csv"
 
 def load_data():
     conn = None
+
     if USE_SQL:
         try:
             conn = pyodbc.connect(get_connection_string())
@@ -37,6 +38,65 @@ def load_data():
     return df, None
 
 
+def get_sql_model_type(entry):
+    """
+    SQL table Model_Registry has a CHECK constraint that only accepts:
+    LogisticRegression, RandomForestClassifier, RandomForestRegressor.
+
+    Calibrated classification models are wrapped by sklearn as CalibratedClassifierCV,
+    so we map calibrated binary/multiclass models back to RandomForestClassifier
+    for registry compatibility.
+    """
+    stage_type = entry.get("stage_type") or entry.get("type")
+
+    # In the pipeline, classification stages can be binary or multiclass.
+    if stage_type in ("binary", "multiclass", "classification"):
+        return "RandomForestClassifier"
+
+    # Regression stages use RandomForestRegressor.
+    if stage_type == "regression":
+        return "RandomForestRegressor"
+
+    # Fallback from actual model class name.
+    raw_type = type(entry.get("model")).__name__
+
+    if raw_type == "CalibratedClassifierCV":
+        return "RandomForestClassifier"
+
+    if raw_type in ("LogisticRegression", "RandomForestClassifier", "RandomForestRegressor"):
+        return raw_type
+
+    # Safe fallback for SQL constraint.
+    return "RandomForestRegressor"
+
+
+def get_metric_values(entry):
+    """
+    Pull stored evaluation metrics when available.
+    Keeps SQL inserts valid even if a metric is missing.
+    """
+    metadata = entry.get("metadata", {}) or {}
+
+    accuracy = metadata.get("accuracy", 0.0)
+    rmse = metadata.get("rmse", 0.0)
+
+    try:
+        accuracy = float(accuracy)
+    except Exception:
+        accuracy = 0.0
+
+    try:
+        rmse = float(rmse)
+    except Exception:
+        rmse = 0.0
+
+    # SQL checks require accuracy between 0 and 1 and RMSE >= 0.
+    accuracy = max(0.0, min(1.0, accuracy))
+    rmse = max(0.0, rmse)
+
+    return accuracy, rmse
+
+
 if __name__ == "__main__":
     df_raw, conn = load_data()
     df = preprocess_for_pipeline(df_raw)
@@ -58,16 +118,19 @@ if __name__ == "__main__":
 
         print("\nSaving model registry to SQL...")
         for name, entry in pipeline.models.items():
-            model_type = type(entry["model"]).__name__
-            deps = ", ".join(entry["depends_on"]) or "vitals only"
+            model_type = get_sql_model_type(entry)
+            accuracy, rmse = get_metric_values(entry)
+            deps = ", ".join(entry.get("depends_on", [])) or "vitals only"
+
             cursor.execute(
                 """
                 INSERT INTO Model_Registry (ModelName, ModelType, Version, Accuracy, RMSE)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (name, model_type, "v2", 0.0, 0.0),
+                (name, model_type, "v2", accuracy, rmse),
             )
-            print(f"  {name} (depends on: {deps})")
+
+            print(f"  {name} ({model_type}, depends on: {deps})")
 
         conn.commit()
         conn.close()

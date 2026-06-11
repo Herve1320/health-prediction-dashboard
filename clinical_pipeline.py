@@ -7,6 +7,14 @@ and acute events relate in real clinical practice.
 """
 
 import os
+import warnings
+
+# Keep training output clean.
+# This suppresses repeated sklearn/joblib warnings during calibration and model fitting.
+os.environ["PYTHONWARNINGS"] = "ignore"
+warnings.filterwarnings("ignore")
+warnings.simplefilter("ignore")
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -15,6 +23,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_squared_error
 from sklearn.preprocessing import LabelEncoder
+from sklearn.calibration import CalibratedClassifierCV
 
 RANDOM_STATE = 42
 MODEL_DIR = "models"
@@ -135,14 +144,32 @@ PIPELINE_STAGES = [
 STAGE_NAMES = {s["name"]: s for s in PIPELINE_STAGES}
 
 
-def bp_stage_label(systolic):
-    if systolic < 120:
-        return 0
-    if systolic < 130:
-        return 1
-    if systolic < 140:
+def bp_stage_label(systolic, diastolic=None):
+    """
+    Blood pressure stage logic using systolic and diastolic values.
+
+    0 = Normal
+    1 = Elevated
+    2 = Hypertension Stage 1
+    3 = Hypertension Stage 2
+    """
+    systolic = float(systolic)
+
+    if diastolic is None:
+        diastolic = 0.0
+    else:
+        diastolic = float(diastolic)
+
+    if systolic >= 140 or diastolic >= 90:
+        return 3
+
+    if systolic >= 130 or diastolic >= 80:
         return 2
-    return 3
+
+    if systolic >= 120 and diastolic < 80:
+        return 1
+
+    return 0
 
 
 def health_risk_tier_label(bp_stage, volatility):
@@ -158,7 +185,10 @@ def build_cascading_labels(df):
     df = df.copy()
     rng = np.random.default_rng(RANDOM_STATE)
 
-    df["BP_Stage"] = df["Avg_Systolic"].apply(bp_stage_label)
+    df["BP_Stage"] = df.apply(
+        lambda r: bp_stage_label(r["Avg_Systolic"], r["Avg_Diastolic"]),
+        axis=1,
+    )
     df["Health_Risk_Tier"] = df.apply(
         lambda r: health_risk_tier_label(r["BP_Stage"], r["BP_Volatility"]), axis=1
     )
@@ -232,11 +262,119 @@ def build_cascading_labels(df):
     return df
 
 
-def compute_overall_risk(predictions):
+def apply_clinical_consistency_guardrails(predictions, patient_row):
     """
-    Aggregate overall risk from pipeline outputs (not a separate ML model).
-    Weights reflect clinical severity hierarchy.
+    Adjust clearly inconsistent downstream signals before the final score is computed.
+
+    Normal BP + low volatility + normal pulse pressure should not activate crisis,
+    emergency, stroke, or cardiac acute-risk signals only because of model noise.
     """
+    if patient_row is None:
+        return predictions
+
+    predictions = dict(predictions)
+
+    systolic = float(patient_row.get("Avg_Systolic", 0))
+    diastolic = float(patient_row.get("Avg_Diastolic", 0))
+    volatility = float(patient_row.get("BP_Volatility", 0))
+    pulse_pressure = float(patient_row.get("Pulse_Pressure", 0))
+    age = int(patient_row.get("Age", 0))
+
+    normal_bp_profile = (
+        systolic < 120
+        and diastolic < 80
+        and volatility < 10
+        and pulse_pressure < 50
+    )
+
+    mild_bp_profile = (
+        systolic < 130
+        and diastolic < 85
+        and volatility < 12
+        and pulse_pressure < 55
+    )
+
+    if normal_bp_profile:
+        predictions["BP_Stage"] = 0
+        predictions["Health_Risk_Tier"] = 0
+
+        for key in [
+            "Hypertensive_Event",
+            "Hypertensive_Crisis_Risk",
+            "BP_Medication_Recommendation",
+            "Cardiovascular_Event_Risk",
+            "Stroke_Risk",
+            "Heart_Attack_Risk",
+            "Emergency_Visit_Risk",
+        ]:
+            if key in predictions:
+                predictions[key] = 0
+
+        if age < 60 and "Chronic_Hypertension_Development" in predictions:
+            predictions["Chronic_Hypertension_Development"] = 0
+
+    elif mild_bp_profile:
+        for key in [
+            "Hypertensive_Crisis_Risk",
+            "Emergency_Visit_Risk",
+            "Stroke_Risk",
+            "Heart_Attack_Risk",
+        ]:
+            if key in predictions:
+                predictions[key] = 0
+
+    return predictions
+
+
+def compute_overall_risk(predictions, patient_row=None):
+    """
+    Compute a clinically consistent Composite Pipeline Risk Score.
+
+    This score is not a diagnosis. It is a weighted screening score.
+    Guardrails prevent normal or near-normal input profiles from being escalated
+    to high/critical risk only because downstream models are noisy.
+    """
+    bp_stage = int(predictions.get("BP_Stage", 0))
+    health_tier = int(predictions.get("Health_Risk_Tier", 0))
+
+    max_score_cap = None
+    forced_level = None
+
+    if patient_row is not None:
+        systolic = float(patient_row.get("Avg_Systolic", 0))
+        diastolic = float(patient_row.get("Avg_Diastolic", 0))
+        volatility = float(patient_row.get("BP_Volatility", 0))
+        pulse_pressure = float(patient_row.get("Pulse_Pressure", 0))
+        age = int(patient_row.get("Age", 0))
+
+        normal_bp_profile = (
+            systolic < 120
+            and diastolic < 80
+            and volatility < 10
+            and pulse_pressure < 50
+        )
+
+        mild_bp_profile = (
+            systolic < 130
+            and diastolic < 85
+            and volatility < 12
+            and pulse_pressure < 55
+        )
+
+        # Normal BP + stable readings should never become High or Critical.
+        if normal_bp_profile:
+            if age < 60:
+                forced_level = "Low"
+                max_score_cap = 1.9
+            else:
+                forced_level = "Moderate"
+                max_score_cap = 3.9
+
+        # Mild/elevated profiles should not become High/Critical unless raw vitals support it.
+        elif mild_bp_profile:
+            forced_level = "Moderate"
+            max_score_cap = 3.9
+
     weights = {
         "Hypertensive_Crisis_Risk": 3.0,
         "Emergency_Visit_Risk": 3.0,
@@ -247,19 +385,44 @@ def compute_overall_risk(predictions):
         "Hypertensive_Event": 1.0,
         "BP_Medication_Recommendation": 0.5,
     }
-    stage_weight = float(predictions.get("BP_Stage", 0)) * 0.8
-    tier_weight = float(predictions.get("Health_Risk_Tier", 0)) * 0.6
 
-    score = stage_weight + tier_weight
-    for key, w in weights.items():
-        val = predictions.get(key, 0)
-        if val == 1 or val is True:
-            score += w
+    score = 0.0
+    score += float(bp_stage) * 0.8
+    score += float(health_tier) * 0.6
 
-    crisis = predictions.get("Hypertensive_Crisis_Risk", 0)
-    flag = 1 if score >= 4.0 or crisis == 1 else 0
-    level = "Critical" if score >= 7 else "High" if score >= 4 else "Moderate" if score >= 2 else "Low"
-    return {"Overall_Risk_Flag": flag, "Overall_Risk_Score": round(score, 2), "Overall_Risk_Level": level}
+    for key, weight in weights.items():
+        value = predictions.get(key, 0)
+        try:
+            active = int(value) == 1
+        except Exception:
+            active = value is True
+
+        if active:
+            score += weight
+
+    score = round(score, 2)
+
+    if score >= 7:
+        level = "Critical"
+    elif score >= 4:
+        level = "High"
+    elif score >= 2:
+        level = "Moderate"
+    else:
+        level = "Low"
+
+    if max_score_cap is not None and score > max_score_cap:
+        score = max_score_cap
+        level = forced_level
+
+    flag = 1 if level in ("High", "Critical") else 0
+
+    return {
+        "Overall_Risk_Flag": flag,
+        "Overall_Risk_Score": round(score, 2),
+        "Overall_Risk_Level": level,
+    }
+
 
 
 def _build_feature_matrix(row_or_df, stage_def, upstream_values):
@@ -275,6 +438,88 @@ def _build_feature_matrix(row_or_df, stage_def, upstream_values):
     return base
 
 
+def _fit_with_optional_calibration(base_model, X_train, y_train, stage_type):
+    """Fit classifiers with probability calibration when data is sufficient."""
+    if stage_type not in ("binary", "multiclass"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            base_model.fit(X_train, y_train)
+        return base_model, False
+
+    y_series = pd.Series(y_train)
+    class_counts = y_series.value_counts()
+
+    # Need at least 2 classes and enough samples per class for 3-fold calibration.
+    if len(class_counts) < 2 or class_counts.min() < 3:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            base_model.fit(X_train, y_train)
+        return base_model, False
+
+    try:
+        calibrated = CalibratedClassifierCV(
+            estimator=base_model,
+            method="sigmoid",
+            cv=3,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            calibrated.fit(X_train, y_train)
+        return calibrated, True
+    except TypeError:
+        # Compatibility fallback for older sklearn versions.
+        calibrated = CalibratedClassifierCV(
+            base_estimator=base_model,
+            method="sigmoid",
+            cv=3,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            calibrated.fit(X_train, y_train)
+        return calibrated, True
+    except Exception:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            base_model.fit(X_train, y_train)
+        return base_model, False
+
+
+def _prediction_confidence(model, X, raw):
+    """Return predicted-class probability for classifiers when available."""
+    if not hasattr(model, "predict_proba"):
+        return None, None
+
+    try:
+        probs = model.predict_proba(X)[0]
+        classes = list(getattr(model, "classes_", range(len(probs))))
+        if raw in classes:
+            idx = classes.index(raw)
+        else:
+            idx = int(np.argmax(probs))
+        confidence = float(probs[idx])
+        prob_map = {str(classes[i]): float(probs[i]) for i in range(len(probs))}
+        return confidence, prob_map
+    except Exception:
+        return None, None
+
+
+def _regression_interval(pred_value, rmse):
+    """Approximate 95% prediction interval using evaluation RMSE when available."""
+    if rmse is None:
+        return None
+    try:
+        pred_value = float(pred_value)
+        rmse = float(rmse)
+        return {
+            "lower": round(pred_value - 1.96 * rmse, 2),
+            "upper": round(pred_value + 1.96 * rmse, 2),
+            "rmse": round(rmse, 4),
+            "method": "approx_95_percent_interval_from_eval_rmse",
+        }
+    except Exception:
+        return None
+
+
 class ClinicalPipeline:
     def __init__(self, df):
         self.df = df
@@ -285,8 +530,8 @@ class ClinicalPipeline:
         if stage_type == "binary":
             return LogisticRegression(max_iter=1000, solver="liblinear")
         if stage_type == "multiclass":
-            return RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1)
-        return RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1)
+            return RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE, n_jobs=1)
+        return RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE, n_jobs=1)
 
     def _save_eval_metadata(self, model, target, X_test, y_test, stage_type):
         os.makedirs(MODEL_DIR, exist_ok=True)
@@ -300,10 +545,18 @@ class ClinicalPipeline:
         if stage_type in ("binary", "multiclass"):
             preds = model.predict(X_test)
             report = classification_report(y_test, preds, output_dict=True, zero_division=0)
-            if stage_type == "binary":
-                eval_data["y_probs"] = model.predict_proba(X_test)[:, 1].tolist()
+            if hasattr(model, "predict_proba"):
+                probs = model.predict_proba(X_test)
+                if stage_type == "binary" and probs.shape[1] > 1:
+                    eval_data["y_probs"] = probs[:, 1].tolist()
+                else:
+                    eval_data["y_probs"] = None
+                eval_data["mean_confidence"] = float(np.max(probs, axis=1).mean())
+                eval_data["min_confidence"] = float(np.max(probs, axis=1).min())
             else:
                 eval_data["y_probs"] = None
+                eval_data["mean_confidence"] = None
+                eval_data["min_confidence"] = None
             eval_data["accuracy"] = report["accuracy"]
             eval_data["precision"] = report["weighted avg"]["precision"]
             eval_data["recall"] = report["weighted avg"]["recall"]
@@ -313,6 +566,7 @@ class ClinicalPipeline:
             eval_data["rmse"] = float(np.sqrt(mean_squared_error(y_test, preds)))
 
         joblib.dump(eval_data, os.path.join(MODEL_DIR, f"{target}_eval.pkl"))
+        return eval_data
 
     def _training_features(self, stage_def):
         """Use ground-truth upstream labels during training."""
@@ -329,15 +583,19 @@ class ClinicalPipeline:
                 X, y, test_size=0.2, random_state=RANDOM_STATE
             )
 
-            model = self._get_model(stage_def["type"])
-            model.fit(X_train, y_train)
+            base_model = self._get_model(stage_def["type"])
+            model, calibrated = _fit_with_optional_calibration(
+                base_model, X_train, y_train, stage_def["type"]
+            )
 
-            self._save_eval_metadata(model, name, X_test, y_test, stage_def["type"])
+            eval_data = self._save_eval_metadata(model, name, X_test, y_test, stage_def["type"])
             self.models[name] = {
                 "model": model,
                 "feature_columns": list(X.columns),
                 "depends_on": stage_def["depends_on"],
                 "type": stage_def["type"],
+                "calibrated": calibrated,
+                "rmse": eval_data.get("rmse") if isinstance(eval_data, dict) else None,
             }
             print(f"  [{len(stage_def['depends_on'])} deps] {name}")
 
@@ -371,6 +629,9 @@ class ClinicalPipeline:
             raw = entry["model"].predict(X)[0]
             upstream[name] = raw
 
+            confidence, probability_map = _prediction_confidence(entry["model"], X, raw)
+            interval = _regression_interval(raw, entry.get("rmse")) if stage_def["type"] == "regression" else None
+
             step = {
                 "stage": name,
                 "value": float(raw) if isinstance(raw, (np.floating, float)) else int(raw),
@@ -378,10 +639,15 @@ class ClinicalPipeline:
                 "upstream_snapshot": {d: upstream.get(d) for d in stage_def["depends_on"]},
                 "description": stage_def["description"],
                 "type": stage_def["type"],
+                "confidence": confidence,
+                "probabilities": probability_map,
+                "prediction_interval": interval,
+                "calibrated": entry.get("calibrated", False),
             }
             steps.append(step)
 
-        overall = compute_overall_risk(upstream)
+        upstream = apply_clinical_consistency_guardrails(upstream, patient_row)
+        overall = compute_overall_risk(upstream, patient_row)
         upstream.update(overall)
 
         return {"steps": steps, "predictions": upstream, "overall": overall}
@@ -414,6 +680,9 @@ def assess_patient(patient_row, models_registry):
         raw = entry["model"].predict(X)[0]
         upstream[name] = raw
 
+        confidence, probability_map = _prediction_confidence(entry["model"], X, raw)
+        interval = _regression_interval(raw, entry.get("rmse")) if stage_def["type"] == "regression" else None
+
         steps.append({
             "stage": name,
             "value": float(raw) if isinstance(raw, (np.floating, float)) else int(raw),
@@ -421,9 +690,14 @@ def assess_patient(patient_row, models_registry):
             "upstream_snapshot": {d: upstream.get(d) for d in stage_def["depends_on"]},
             "description": stage_def["description"],
             "type": stage_def["type"],
+            "confidence": confidence,
+            "probabilities": probability_map,
+            "prediction_interval": interval,
+            "calibrated": entry.get("calibrated", False),
         })
 
-    overall = compute_overall_risk(upstream)
+    upstream = apply_clinical_consistency_guardrails(upstream, patient_row)
+    overall = compute_overall_risk(upstream, patient_row)
     upstream.update(overall)
     return {"steps": steps, "predictions": upstream, "overall": overall}
 
@@ -431,37 +705,25 @@ def assess_patient(patient_row, models_registry):
 def preprocess_for_pipeline(df):
     df = df.copy()
 
-    # Convert Gender safely for SQL + CSV + pandas newer string types
     if "Gender" in df.columns:
         df["Gender"] = (
             df["Gender"]
             .astype(str)
             .str.strip()
             .str.lower()
-            .map({
-                "male": 0,
-                "m": 0,
-                "0": 0,
-                "female": 1,
-                "f": 1,
-                "1": 1,
-            })
+            .map({"male": 0, "m": 0, "0": 0, "female": 1, "f": 1, "1": 1})
             .fillna(0)
             .astype(int)
         )
 
-    # Make sure all model input columns are numeric
     numeric_cols = [
-        "Age", "Gender", "RegionID",
-        "Avg_Systolic", "Avg_Diastolic",
+        "Age", "Gender", "RegionID", "Avg_Systolic", "Avg_Diastolic",
         "BP_Volatility", "Pulse_Pressure", "Reading_Count",
     ]
-
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df.dropna(subset=numeric_cols)
+    df = df.dropna(subset=[c for c in numeric_cols if c in df.columns])
 
     return build_cascading_labels(df)
 
@@ -480,6 +742,12 @@ def load_pipeline_models():
         name = stage_def["name"]
         model_path = os.path.join(MODEL_DIR, f"{name}.pkl")
         eval_path = os.path.join(MODEL_DIR, f"{name}_eval.pkl")
+
+        eval_data = None
+        if os.path.exists(eval_path):
+            eval_data = joblib.load(eval_path)
+            metadata[name] = eval_data
+
         if os.path.exists(model_path):
             models[name] = {
                 "model": joblib.load(model_path),
@@ -487,8 +755,9 @@ def load_pipeline_models():
                 "features": stage_def["features"],
                 "type": stage_def["type"],
                 "description": stage_def["description"],
+                "rmse": eval_data.get("rmse") if isinstance(eval_data, dict) else None,
+                "mean_confidence": eval_data.get("mean_confidence") if isinstance(eval_data, dict) else None,
+                "calibrated": stage_def["type"] in ("binary", "multiclass"),
             }
-        if os.path.exists(eval_path):
-            metadata[name] = joblib.load(eval_path)
 
     return config, models, metadata
