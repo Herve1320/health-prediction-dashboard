@@ -13,22 +13,16 @@ Required files in GitHub:
 - db_service.py
 - requirements.txt
 - generated_data/ml_dataset.csv
-- full_patient_predictions.csv
-- models/ folder with .pkl files
-
-Use these cloud-ready replacements:
-- Rename db_config_cloud_ready.py to db_config.py
-- Rename db_service_cloud_ready.py to db_service.py
-- Rename requirements_cloud.txt to requirements.txt
+- models/ folder with .pkl files (including pipeline_config.pkl and *_eval.pkl)
 
 Before uploading:
-1. Run locally:
+1. Run locally (optional, if retraining):
    python data_generator.py
    python main_engine.py
 2. Confirm these exist:
    generated_data/ml_dataset.csv
-   full_patient_predictions.csv
    models/pipeline_config.pkl
+   models/*.pkl
 
 Streamlit Cloud settings:
 Main file path:

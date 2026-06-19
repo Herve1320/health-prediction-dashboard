@@ -84,16 +84,6 @@ cursor.execute("SELECT PatientID, Age, Gender, RegionID FROM Patients")
 patients = cursor.fetchall()
 
 # ============================================
-# DATA CONTAINERS
-# ============================================
-bp_logs_data = []
-biometric_data = []
-aggregated_data = []
-clinical_events_data = []
-medication_data = []
-emergency_data = []
-
-# ============================================
 # GENERATION LOOP
 # ============================================
 print("Generating realistic medical data...")
@@ -159,9 +149,6 @@ for p in patients:
             VALUES (?, ?, ?, ?)
         """, (pid, date, weight, round(bmi,2)))
 
-        bp_logs_data.append([pid, date, systolic, diastolic, pulse])
-        biometric_data.append([pid, date, weight, round(bmi,2)])
-
     # Aggregation
     avg_sys = np.mean(systolic_values)
     avg_dia = np.mean(diastolic_values)
@@ -174,16 +161,12 @@ for p in patients:
         VALUES (?, ?, ?, ?, ?, ?)
     """, (pid, avg_sys, avg_dia, bp_vol, pulse_pressure, DAYS_HISTORY))
 
-    aggregated_data.append([pid, avg_sys, avg_dia, bp_vol, pulse_pressure, DAYS_HISTORY])
-
     # Clinical events
     if avg_sys > 140 and random.random() < 0.4:
         cursor.execute("""
             INSERT INTO Clinical_Events (PatientID, EventDate, EventType)
             VALUES (?, GETDATE(), 'Hypertension')
         """, (pid,))
-        clinical_events_data.append([pid, "Hypertension"])
-
     # Medication
     if avg_sys > 135 and random.random() < 0.5:
         cursor.execute("""
@@ -191,8 +174,6 @@ for p in patients:
             (PatientID, MedicationName, Dosage, StartDate)
             VALUES (?, 'Amlodipine', '5mg', GETDATE())
         """, (pid,))
-        medication_data.append([pid, "Amlodipine"])
-
     # Emergency
     if avg_sys > 150 and random.random() < 0.3:
         severity = random.choice(['Medium','High'])
@@ -201,8 +182,6 @@ for p in patients:
             (PatientID, VisitDate, Reason, Severity)
             VALUES (?, GETDATE(), 'Hypertensive Crisis', ?)
         """, (pid, severity))
-        emergency_data.append([pid, severity])
-
 conn.commit()
 
 # ============================================

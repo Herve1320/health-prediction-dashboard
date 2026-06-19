@@ -240,6 +240,3 @@ CREATE INDEX IDX_Research_Patient ON Research_Assessments(PatientID);
 CREATE INDEX IDX_Research_Steps_Assessment ON Research_Pipeline_Steps(AssessmentID);
 GO
 
-SELECT * FROM Patients;
-SELECT * FROM Model_Registry;
-

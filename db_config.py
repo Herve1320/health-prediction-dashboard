@@ -33,16 +33,11 @@ DB_TRUSTED = os.getenv("DB_TRUSTED_CONNECTION", "yes").lower() in ("1", "true", 
 # Optional simple password gate for the public dashboard.
 DASHBOARD_PASSWORD = _get_secret("DASHBOARD_PASSWORD", "")
 
-# Modes:
-# - local: use SQL Server
-# - cloud/csv/streamlit: use CSV fallback
-# - auto: try SQL Server first, then CSV fallback
+# Force cloud CSV mode when deployed.
 APP_MODE = _get_secret("APP_MODE", os.getenv("APP_MODE", "auto")).lower()
 
 # CSV used when SQL Server is unavailable.
 CSV_PATIENTS_PATH = _get_secret("CSV_PATIENTS_PATH", "generated_data/ml_dataset.csv")
-
-PUBLIC_URL_NAME = os.getenv("PUBLIC_URL_NAME", "healt-prediction").lower().replace("_", "-")
 
 
 def get_connection_string():
@@ -61,4 +56,4 @@ def get_connection_string():
             raise ValueError("DB_USER and DB_PASSWORD required when Trusted_Connection is disabled")
         parts.append(f"UID={user};PWD={password};")
 
-    return "".join(parts)
+    return """.join(parts)

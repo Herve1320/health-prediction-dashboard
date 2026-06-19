@@ -106,11 +106,6 @@ if __name__ == "__main__":
     print("\nTraining interconnected pipeline (14 models + aggregated overall risk)...")
     pipeline.train_all()
 
-    print("\nGenerating cascade predictions for all patients...")
-    predictions_df = pipeline.predict_all_patients()
-    predictions_df.to_csv("full_patient_predictions.csv", index=False)
-    print("Predictions saved to full_patient_predictions.csv")
-
     if conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Model_Registry WHERE Version='v2'")

@@ -22,7 +22,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_squared_error
-from sklearn.preprocessing import LabelEncoder
 from sklearn.calibration import CalibratedClassifierCV
 
 RANDOM_STATE = 42
@@ -797,38 +796,4 @@ def load_pipeline_models():
             }
 
     return config, models, metadata
-
-
-def self_test_normal_profile():
-    """
-    Quick internal sanity test for normal BP profile.
-    Expected: Low risk, score <= 1.9, acute risk signals suppressed.
-    """
-    patient_row = pd.Series({
-        "Age": 20,
-        "Gender": 0,
-        "RegionID": 1,
-        "Avg_Systolic": 115,
-        "Avg_Diastolic": 75,
-        "BP_Volatility": 5,
-        "Pulse_Pressure": 40,
-        "Reading_Count": 30,
-    })
-
-    noisy_predictions = {
-        "BP_Stage": 3,
-        "Health_Risk_Tier": 2,
-        "Hypertensive_Event": 1,
-        "Hypertensive_Crisis_Risk": 1,
-        "BP_Medication_Recommendation": 1,
-        "Cardiovascular_Event_Risk": 1,
-        "Stroke_Risk": 1,
-        "Heart_Attack_Risk": 1,
-        "Emergency_Visit_Risk": 1,
-    }
-
-    guarded = apply_clinical_consistency_guardrails(noisy_predictions, patient_row)
-    overall = compute_overall_risk(guarded, patient_row)
-    return guarded, overall
-
 
