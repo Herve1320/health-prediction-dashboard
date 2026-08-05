@@ -24,8 +24,9 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_squared_error
 from sklearn.calibration import CalibratedClassifierCV
 
+from src.paths import MODEL_DIR, MODELS_DIR
+
 RANDOM_STATE = 42
-MODEL_DIR = "models"
 
 BASE_VITALS = [
     "Age", "Gender", "RegionID",
@@ -568,7 +569,7 @@ class ClinicalPipeline:
         return RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE, n_jobs=1)
 
     def _save_eval_metadata(self, model, target, X_test, y_test, stage_type):
-        os.makedirs(MODEL_DIR, exist_ok=True)
+        os.makedirs(MODELS_DIR, exist_ok=True)
         eval_data = {
             "y_test": y_test.tolist(),
             "depends_on": STAGE_NAMES[target]["depends_on"],
@@ -636,7 +637,7 @@ class ClinicalPipeline:
         self._save_pipeline_config()
 
     def _save_pipeline_config(self):
-        os.makedirs(MODEL_DIR, exist_ok=True)
+        os.makedirs(MODELS_DIR, exist_ok=True)
         config = {
             "stages": PIPELINE_STAGES,
             "stage_order": self.stage_order,

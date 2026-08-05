@@ -1,15 +1,12 @@
 import pandas as pd
 import pyodbc
 
-from clinical_pipeline import (
-    MODEL_DIR,
-    ClinicalPipeline,
-    preprocess_for_pipeline,
-)
-from db_config import get_connection_string
+from config.db_config import get_connection_string
+from src.clinical_pipeline import MODEL_DIR, ClinicalPipeline, preprocess_for_pipeline
+from src.paths import CSV_PATIENTS_PATH
 
 USE_SQL = True
-CSV_PATH = "generated_data/ml_dataset.csv"
+CSV_PATH = str(CSV_PATIENTS_PATH)
 
 
 def load_data():

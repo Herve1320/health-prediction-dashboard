@@ -1,5 +1,9 @@
 """
-Start the Streamlit dashboard and expose it publicly with a fixed ngrok domain.
+Start the Streamlit dashboard and expose it locally via ngrok.
+
+NOTE: ngrok links stop working when this PC sleeps, the terminal closes, or
+ngrok restarts. For reliable public sharing, deploy to Streamlit Community
+Cloud instead (see docs/CLOUD_DEPLOYMENT_CHECKLIST.txt).
 
 Expected domain:
   https://healt-prediction.com.ngrok-free.app
@@ -19,9 +23,10 @@ import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
 PORT = 8501
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DOMAIN = "healt-prediction.com.ngrok-free.app"
 
 
@@ -34,7 +39,7 @@ def find_ngrok():
         os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\ngrok.exe"),
         os.path.expandvars(r"%ProgramFiles%\ngrok\ngrok.exe"),
         os.path.expandvars(r"%ProgramFiles(x86)%\ngrok\ngrok.exe"),
-        os.path.join(PROJECT_DIR, "ngrok.exe"),
+        str(PROJECT_DIR / "ngrok.exe"),
     ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
@@ -77,11 +82,11 @@ def start_streamlit():
             "-m",
             "streamlit",
             "run",
-            "app.py",
+            str(PROJECT_DIR / "app.py"),
             f"--server.port={PORT}",
             "--server.address=0.0.0.0",
         ],
-        cwd=PROJECT_DIR,
+        cwd=str(PROJECT_DIR),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -128,7 +133,7 @@ def configure_ngrok(ngrok_path):
 
     result = subprocess.run(
         [ngrok_path, "config", "add-authtoken", token],
-        cwd=PROJECT_DIR,
+        cwd=str(PROJECT_DIR),
         capture_output=True,
         text=True,
         check=False,
@@ -149,7 +154,7 @@ def start_ngrok(ngrok_path):
 
     proc = subprocess.Popen(
         [ngrok_path, "http", f"--domain={domain}", str(PORT)],
-        cwd=PROJECT_DIR,
+        cwd=str(PROJECT_DIR),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -183,7 +188,7 @@ def start_ngrok(ngrok_path):
 
 
 def save_public_url(public_url):
-    url_file = os.path.join(PROJECT_DIR, "public_url.txt")
+    url_file = PROJECT_DIR / "public_url.txt"
     with open(url_file, "w", encoding="utf-8") as f:
         f.write(public_url)
 
@@ -225,6 +230,8 @@ def main():
     print()
     print("=" * 56)
     print("  Health Prediction — ngrok public launcher")
+    print("  For reliable sharing, use Streamlit Community Cloud.")
+    print("  See docs/CLOUD_DEPLOYMENT_CHECKLIST.txt")
     print("=" * 56)
     print(f"  Python: {sys.executable}")
     print()
@@ -249,9 +256,9 @@ def main():
 
     free_port_windows(PORT)
 
-    url_file = os.path.join(PROJECT_DIR, "public_url.txt")
-    if os.path.exists(url_file):
-        os.remove(url_file)
+    url_file = PROJECT_DIR / "public_url.txt"
+    if url_file.exists():
+        url_file.unlink()
 
     streamlit_proc = start_streamlit()
     stream_process_output(streamlit_proc, "streamlit")

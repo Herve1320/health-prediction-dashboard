@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from sklearn.metrics import auc, precision_recall_curve, roc_curve
 
-from clinical_pipeline import PIPELINE_STAGES, assess_patient, load_pipeline_models
+from src.clinical_pipeline import PIPELINE_STAGES, assess_patient, load_pipeline_models
+from src.paths import CSV_PATIENTS_PATH
 
 
 # ============================================================
@@ -42,7 +43,7 @@ PRIVACY_NOTICE = (
 # ============================================================
 
 try:
-    from db_config import DASHBOARD_PASSWORD, APP_MODE
+    from config.db_config import DASHBOARD_PASSWORD, APP_MODE
 except Exception:
     DASHBOARD_PASSWORD = ""
     APP_MODE = "auto"
@@ -53,7 +54,7 @@ except Exception:
 # ============================================================
 
 try:
-    from db_service import (
+    from src.db_service import (
         fetch_assessment_steps,
         fetch_model_registry,
         fetch_patients,
@@ -67,8 +68,8 @@ except Exception:
         return False, "Database service unavailable. Running in CSV/cloud mode."
 
     def fetch_patients():
-        csv_path = "generated_data/ml_dataset.csv"
-        if os.path.exists(csv_path):
+        csv_path = CSV_PATIENTS_PATH
+        if csv_path.exists():
             return pd.read_csv(csv_path)
         return pd.DataFrame()
 
@@ -720,7 +721,7 @@ def render_assessment_result(result, patient_row=None):
         ]
         if available_conf.empty:
             st.warning(
-                "Confidence values are not available yet. Re-run `python main_engine.py` with the calibrated "
+                "Confidence values are not available yet. Re-run `python -m src.main_engine` with the calibrated "
                 "`clinical_pipeline.py`, then restart the dashboard."
             )
         else:
@@ -1075,7 +1076,7 @@ with tab_assess:
 
     if run_clicked:
         if not models:
-            st.error("No trained models found. Run `python main_engine.py` and deploy the `models/` folder.")
+            st.error("No trained models found. Run `python -m src.main_engine` and deploy the `models/` folder.")
         else:
             patient, gender_label = build_patient_row(
                 age=age,
@@ -1307,7 +1308,7 @@ with tab_perf:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     else:
-        st.warning("No evaluation metadata found. Run `python main_engine.py` and deploy the `models/` folder.")
+        st.warning("No evaluation metadata found. Run `python -m src.main_engine` and deploy the `models/` folder.")
 
 
 # ============================================================

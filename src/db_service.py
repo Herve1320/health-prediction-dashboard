@@ -1,14 +1,11 @@
 """
 Cloud-ready database service.
 
-This file keeps the same function names used by app.py.
-
 Local mode:
-- If SQL Server + pyodbc are available, it uses SQL Server.
+- Uses SQL Server when configured and available.
 
 Cloud mode:
-- If SQL Server is unavailable, it automatically reads generated_data/ml_dataset.csv.
-- Research history is kept only in Streamlit session state, so it resets when the app restarts.
+- Reads data/ml_dataset.csv and keeps research history in session state only.
 """
 
 import json
@@ -19,7 +16,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from db_config import APP_MODE, CSV_PATIENTS_PATH, get_connection_string
+from config.db_config import APP_MODE, CSV_PATIENTS_PATH, get_connection_string, sql_configured
+from src.paths import MODELS_DIR
 
 PIPELINE_VERSION = "v2"
 
@@ -33,7 +31,11 @@ def _try_import_pyodbc():
 
 
 def _use_sql_allowed():
-    return APP_MODE not in ("cloud", "csv", "streamlit")
+    if APP_MODE in ("cloud", "csv", "streamlit"):
+        return False
+    if not sql_configured():
+        return False
+    return True
 
 
 @contextmanager
@@ -57,7 +59,7 @@ def _load_csv_patients():
     path = _csv_path()
     if not path.exists():
         raise FileNotFoundError(
-            f"CSV file not found: {path}. Add generated_data/ml_dataset.csv to your GitHub repo."
+            f"CSV file not found: {path}. Add data/ml_dataset.csv to your GitHub repo."
         )
 
     df = pd.read_csv(path)
@@ -126,7 +128,7 @@ def fetch_model_registry():
             pass
 
     # Cloud fallback: lightweight registry from model eval files.
-    model_dir = Path("models")
+    model_dir = MODELS_DIR
     rows = []
     if model_dir.exists():
         for eval_file in sorted(model_dir.glob("*_eval.pkl")):

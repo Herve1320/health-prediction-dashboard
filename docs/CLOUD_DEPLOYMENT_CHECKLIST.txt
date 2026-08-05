@@ -1,0 +1,50 @@
+CLOUD DEPLOYMENT CHECKLIST
+
+Goal:
+Deploy the Health Prediction Streamlit dashboard so it works even when the local computer is off.
+
+Recommended platform:
+Streamlit Community Cloud (https://share.streamlit.io)
+
+Why not ngrok?
+- ngrok links die when your PC sleeps, the terminal closes, or the tunnel restarts.
+- Free ngrok URLs show a browser warning page that makes links feel broken.
+- Streamlit Cloud gives a stable https://your-app.streamlit.app URL.
+
+Required files in GitHub:
+- app.py (entry point)
+- src/ (application code)
+- config/db_config.py
+- requirements.txt
+- data/ml_dataset.csv
+- models/ folder with .pkl files (including pipeline_config.pkl and *_eval.pkl)
+
+Before uploading:
+1. Run locally (optional, if retraining):
+   python scripts/data_generator.py
+   python -m src.main_engine
+2. Confirm these exist:
+   data/ml_dataset.csv
+   models/pipeline_config.pkl
+   models/*.pkl
+
+Streamlit Cloud settings:
+Main file path:
+  app.py
+
+Secrets (App settings -> Secrets):
+  APP_MODE = "cloud"
+  DASHBOARD_PASSWORD = "choose-a-password"
+
+Note: APP_MODE=cloud is also auto-detected on Streamlit Cloud even without secrets.
+
+Important:
+- Do not upload tunnel_secrets.bat or ngrok token to GitHub.
+- Do not commit .streamlit/secrets.toml.
+
+After deploy:
+- Share the *.streamlit.app URL from your Streamlit Cloud workspace.
+- Redeploy after pushing structural changes to GitHub.
+
+Local-only sharing (not recommended for demos):
+  python scripts/share_public.py
